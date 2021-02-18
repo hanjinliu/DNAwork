@@ -6,6 +6,12 @@ from .func import rc, translate, iter_findall
 from .match import DNAmatch
 from .feature import DNAfeature
 
+class ExperimentError(Exception):
+    """
+    Your experiment will fail.
+    I'm sorry about that.
+    """
+    pass
 
 def asDNA(obj, name=""):
     """
@@ -111,14 +117,26 @@ class DNA:
         return f"{self.name} (length = {len(self)}, {self.shape})"
 
     def __contains__(self, seq):
-        f, r = self._findall(seq)
-        return len(f) + len(r) > 0
+        return seq in self.f or seq in self.r
     
-    def PCR(self, forward, reverse, min_match=15):
+    def PCR(self, forward, reverse, min_match:int=15):
         """
-        Conduct PCR using `self` as template.
-        min_match: The minimum length that defines two sequences are complementary.
-        """
+        Conduct PCR using 'self' as the template DNA.
+
+        Parameters
+        ----------
+        forward : str or DNA
+            Sequence of forward primer
+        reverse : str or DNA
+            Sequence of reverse primer
+        min_match : int, optional
+            The minimum length of base match, by default 15
+
+        Returns
+        -------
+        DNA
+            The PCR product.
+        """        
         # type check
         forward = asDNA(forward, name="fw primer")
         reverse = asDNA(reverse, name="rv primer")
@@ -128,18 +146,18 @@ class DNA:
         ans = None
 
         # plot
-        if(match):
+        if (match):
             self._plot(match)
 
         # print result
         if (len(match) == 0):
-            print(" No PCR product obtained. No match found.")
+            raise ExperimentError("No PCR product obtained. No match found.")
         elif (len(match) == 1):
-            print(" No PCR product obtained. Only one match found.")
+            raise ExperimentError("No PCR product obtained. Only one match found.")
         elif (len(match) > 2):
-            print(f" Too many matches ({len(match)} matches found).")
+            raise ExperimentError(f"Too many matches ({len(match)} matches found).")
         elif (match[0].dir == match[1].dir):
-            print(" Each primer binds to the template in the same direction.")
+            raise ExperimentError("Each primer binds to the template in the same direction.")
         else:
             ans = self._do_PCR(match)
             ans.name = f"{self.name}-amp"
@@ -153,6 +171,24 @@ class DNA:
         return self.ligate(other)
     
     def translate(self, startswith=0, endswith="until stop codon"):
+        """
+        Translate into an amino acid sequence.
+
+        Parameters
+        ----------
+        startswith : int or str, optional
+            If int, the position to start translation. If str, the sequence that 
+            translation starts. By default 0.
+        endswith : int or str, optional
+            If int, the position that translation ends. If str, the sequence that
+            translation ends. By default "until stop codon", which means translation
+            stops when a stop codon encountered.
+
+        Returns
+        -------
+        str
+            Translation product.
+        """        
         seq = self.f
         autostop = True
         if (isinstance(startswith, int)):
@@ -163,7 +199,7 @@ class DNA:
             raise TypeError("`startswith` must be int or str.")
         
         if (aa0 < 0 or aa0 >= len(seq)):
-            ValueError("`startswith` is not appropriate.")
+            raise ValueError("`startswith` is not appropriate.")
 
         if (endswith == "until stop codon"):
             aa1 = -1
@@ -182,6 +218,19 @@ class DNA:
         return translate(seq, autostop=autostop)
 
     def ligate(self, other):
+        """
+        Ligate two DNA directly. This is different from ligation reaction.
+
+        Parameters
+        ----------
+        other : str or DNA
+            The other DNA to ligate.
+
+        Returns
+        -------
+        DNA
+            Ligated DNA
+        """        
         other = asDNA(other)
         l = len(self)
         self.f = self.f + other.f
@@ -192,16 +241,12 @@ class DNA:
             f.end += l
             self.feature_list.append(f)
         return self
-    
-    def iter_feature(self, feature_name):
-        for f in self.feature_list:
-            if (f.tag == feature_name):
-                yield f
 
     def crop(self, start, end):
         """
-        crop out
-        """
+        Crop out fragment from DNA.
+        self.f[start:end] is croppeed out.
+        """        
         if (start >= end and self.shape == "linear"):
             raise ValueError("start < end for linear DNA.")
         elif (start < end and self.shape == "linear"):
@@ -223,7 +268,16 @@ class DNA:
     def split(self, pos):
         """
         Split linear DNA into two fragments.
-        Do NOT update self.
+
+        Parameters
+        ----------
+        pos : int
+            The position to split.
+
+        Returns
+        -------
+        DNA and DNA
+            Two fragments
         """
         if (self.shape == "circular"):
             raise TypeError("Cannot split circular DNA.")
@@ -250,9 +304,18 @@ class DNA:
 
     def open(self, pos):
         """
-        Open circular DNA.
-        Do NOT update self.
-        """
+        Open circular DNA and make linear DNA.
+
+        Parameters
+        ----------
+        pos : int
+            The position to open.
+
+        Returns
+        -------
+        DNA
+            The opened DNA.
+        """        
         if (self.shape == "linear"):
             raise TypeError("Cannot open linear DNA.")
         self.shape = "linear"
@@ -261,9 +324,22 @@ class DNA:
         return frag_r.ligate(frag_l)
 
     def InFusion(self, insert):
+        """
+        Simulated In-Fusion.
+
+        Parameters
+        ----------
+        insert : str or DNA
+            The DNA fragment to insert.
+
+        Returns
+        -------
+        DNA object
+            The product of In-Fusion
+        """        
         insert = asDNA(insert, name="insert")
         if (self.shape == "circular" or insert.shape == "circular"):
-            raise TypeError("Both vector and insert must be linear DNA.")
+            raise ValueError("Both vector and insert must be linear DNA.")
         if (len(self) < 30):
             raise ValueError(f"`{self.name}` is too short.")
         if (len(insert) < 30):
@@ -273,26 +349,38 @@ class DNA:
         frag_l, frag_r = self.split(pos0)
 
         if (frag_l[:15] != insert[-15:]):
-            raise ValueError("Mismatch! Check carefully:\n"\
-                            f"--{insert[-20:]}\n"\
-                            f"       {frag_l[:20]}--")
+            raise ExperimentError("Mismatch! Check carefully:\n"\
+                                 f"--{insert[-20:]}\n"\
+                                 f"       {frag_l[:20]}--")
         if (frag_r[-15:] != insert[:15]):
-            raise ValueError("Mismatch! Check carefully:\n"\
-                            f"       {insert[:20]}--\n"\
-                            f"--{frag_r[-20:]}")
+            raise ExperimentError("Mismatch! Check carefully:\n"\
+                                 f"       {insert[:20]}--\n"\
+                                 f"--{frag_r[-20:]}")
         
         frag_r, _ = frag_r.split(len(frag_r) - 15)
         _, frag_l = frag_l.split(15)
         out = frag_r + insert + frag_l
         out.name = f"{insert.name} in {self.name}"
         out.shape = "circular"
+        out.plot()
 
         return out
 
+            
     def digest(self, seq):
         """
-        seq = G^GATCC
-        """
+        Restriction enzyme digestion.
+
+        Parameters
+        ----------
+        seq : str
+            Must be "G^GATCC" form. "^" means the site of digestion.
+
+        Returns
+        -------
+        list of int
+            The lengths of digestion products
+        """        
         try:
             l, r = seq.split("^")
         except:
@@ -310,14 +398,11 @@ class DNA:
 
         self._plot([])
         match = self.find_match(l + r)
-        x_list = []
-        for m in match:
-            if (m.dir == "->"):
-                x_list.append((m.start + m.end) / 2)
+        x_list = [(m.start + m.end) / 2 for m in match if m.dir == "->"]
         
         lens = []
         poss = []
-        if(len(x_list) > 0):
+        if (len(x_list) > 0):
             x_list.sort()
             edge = 0
             for i, xc in enumerate(x_list):
@@ -347,6 +432,23 @@ class DNA:
         return lens
 
     def find_match(self, seq, min_match=15):
+        """
+        Find all the primer binding sites. 
+        _____ full match  ... OK
+        ____/ flanking region contained ... OK
+        __/\_ mismatch ... NG
+
+        Parameters
+        ----------
+        seq : str or DNA
+            Sequence of primer.
+        min_match : int, optional
+            The minimun length of match, by default 15.
+
+        Returns
+        -------
+        list of DNAmatch objects
+        """        
         if (min_match <= 0):
             raise ValueError("`min_match` must be positive value")
 
@@ -382,11 +484,24 @@ class DNA:
         return match
     
     def plot(self):
+        """
+        Draw the DNA profile.
+        """
         self._plot([])
         plt.show()
         return None
     
     def plot_match(self, seqs, min_match=15):
+        """
+        Draw the DNA profile and matches.
+
+        Parameters
+        ----------
+        seqs : list of str or list of DNA
+            find match of what sequences.
+        min_match : int, optional
+            The minimun length of match, by default 15
+        """
         if (not isinstance(seqs, (list, tuple))):
             seqs = [seqs]
          
@@ -410,8 +525,8 @@ class DNA:
             product_seq = self[mf.start:mr.end]
 
         elif (self.shape == "linear"):
-            print(" No PCR product obtained.")
-            return None
+            raise ExperimentError("No PCR product obtained.")
+            
         else:
             mr, mf = match
             product_seq = (self.f * 2)[mf.start:mr.end + len(self)]
